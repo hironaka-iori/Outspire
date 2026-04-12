@@ -583,6 +583,14 @@ async function handleDailyPlan(env: Env): Promise<void> {
  * Plan a single device's dispatch for today.
  * Used on /register and /resume for immediate scheduling.
  * Only plans future time slots (skips already-passed times).
+ *
+ * NOTE: The per-slot read-modify-write here is NOT concurrency-safe.
+ * If two different devices register at the same instant and share a
+ * time slot, the later write can overwrite the earlier one's jobs.
+ * At current scale (~100 users) this is acceptably rare, and the daily
+ * planner rebuilds all slots from scratch each morning anyway.
+ * If this becomes a real problem, migrate the merge path to a Durable
+ * Object for single-writer serialization.
  */
 async function planDeviceForToday(
   env: Env,
@@ -618,7 +626,14 @@ async function planDeviceForToday(
       ((await env.OUTSPIRE_KV.get(slotKey, "json")) as DispatchSlot) ?? [];
 
     // Remove any old jobs from this device, then add new ones
+    // Log for observability — if existing.length is unexpectedly low after
+    // concurrent writes, this helps diagnose lost jobs.
     const filtered = existing.filter((j) => j.deviceId !== deviceId);
+    if (existing.length > 0) {
+      console.log(
+        `planDevice ${deviceId.slice(0, 8)}: slot ${time} merge ${existing.length} existing → ${filtered.length} after filter → ${filtered.length + jobs.length} after add`
+      );
+    }
     filtered.push(...jobs);
 
     await env.OUTSPIRE_KV.put(slotKey, JSON.stringify(filtered), {
