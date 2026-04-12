@@ -13,6 +13,6 @@ id = "a8ada3a1a83f412ba0c172ef0fb80c63"
 crons = ["30 22 * * *", "* 23 * * *", "* 0-10 * * *"]
 
 [vars]
-GITHUB_CALENDAR_URL = "https://raw.githubusercontent.com/Computerization/Outspire/main/calendar"
+GITHUB_CALENDAR_URL = "https://raw.githubusercontent.com/Computerization/wfla-events/main"
 HOLIDAY_CN_URL = "https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master"
 APNS_BUNDLE_ID = "dev.wrye.Outspire"
