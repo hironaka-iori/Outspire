@@ -65,6 +65,8 @@ private struct LockScreenView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(state.className)
@@ -97,6 +99,8 @@ private struct LockScreenView: View {
                 }
             }
 
+            Spacer(minLength: 0)
+
             // Progress bar
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -113,9 +117,9 @@ private struct LockScreenView: View {
                 }
             }
             .frame(height: 3)
-            .padding(.top, 12)
         }
-        .padding(16)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
     }
 
     private var subtitle: String {
@@ -137,7 +141,9 @@ private struct CompactLeadingView: View {
         TimelineView(.periodic(from: .now, by: 10)) { timeline in
             ProgressRing(
                 progress: progress(for: state, at: timeline.date),
-                color: stateColor(for: state)
+                color: stateColor(for: state),
+                lineWidth: 2,
+                size: 18
             )
         }
     }
@@ -164,68 +170,10 @@ private struct MinimalView: View {
             ProgressRing(
                 progress: progress(for: state, at: timeline.date),
                 color: stateColor(for: state),
-                size: 22
+                lineWidth: 2,
+                size: 18
             )
         }
-    }
-}
-
-private struct ExpandedView: View {
-    let state: ClassActivityAttributes.ContentState
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(state.className)
-                        .font(WidgetFont.title(size: 16))
-                        .tracking(-0.2)
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-
-                    if !state.roomNumber.isEmpty {
-                        Text(state.roomNumber)
-                            .font(WidgetFont.caption())
-                            .tracking(0.5)
-                            .foregroundStyle(.white.opacity(0.4))
-                    }
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(countdownLabel(for: state.status))
-                        .font(WidgetFont.caption())
-                        .tracking(0.5)
-                        .foregroundStyle(.white.opacity(0.4))
-                        .textCase(.uppercase)
-
-                    Text(timerInterval: state.periodStart ... state.periodEnd, countsDown: true)
-                        .font(WidgetFont.number(size: 28))
-                        .tracking(-1)
-                        .foregroundStyle(stateColor(for: state))
-                        .monospacedDigit()
-                }
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.white.opacity(0.08))
-                        .frame(height: 3)
-
-                    TimelineView(.periodic(from: .now, by: 10)) { timeline in
-                        let prog = progress(for: state, at: timeline.date)
-                        Capsule()
-                            .fill(progressGradient(for: state))
-                            .frame(width: geo.size.width * prog, height: 3)
-                    }
-                }
-            }
-            .frame(height: 3)
-            .padding(.top, 12)
-        }
-        .padding(.horizontal, 4)
     }
 }
 
@@ -239,8 +187,56 @@ struct OutspireWidgetLiveActivity: Widget {
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(context.state.className)
+                            .font(WidgetFont.title(size: 16))
+                            .tracking(-0.2)
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+
+                        if !context.state.roomNumber.isEmpty {
+                            Text(context.state.roomNumber)
+                                .font(WidgetFont.caption())
+                                .tracking(0.5)
+                                .foregroundStyle(.white.opacity(0.4))
+                        }
+                    }
+                    .padding(.leading, 4)
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(countdownLabel(for: context.state.status))
+                            .font(WidgetFont.caption())
+                            .tracking(0.5)
+                            .foregroundStyle(.white.opacity(0.4))
+                            .textCase(.uppercase)
+
+                        Text(timerInterval: context.state.periodStart ... context.state.periodEnd, countsDown: true)
+                            .font(WidgetFont.number(size: 28))
+                            .tracking(-1)
+                            .foregroundStyle(stateColor(for: context.state))
+                            .monospacedDigit()
+                    }
+                    .padding(.trailing, 4)
+                }
                 DynamicIslandExpandedRegion(.bottom) {
-                    ExpandedView(state: context.state)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(.white.opacity(0.08))
+                                .frame(height: 3)
+
+                            TimelineView(.periodic(from: .now, by: 10)) { timeline in
+                                let prog = progress(for: context.state, at: timeline.date)
+                                Capsule()
+                                    .fill(progressGradient(for: context.state))
+                                    .frame(width: geo.size.width * prog, height: 3)
+                            }
+                        }
+                    }
+                    .frame(height: 3)
+                    .padding(.horizontal, 4)
                 }
             } compactLeading: {
                 CompactLeadingView(state: context.state)
