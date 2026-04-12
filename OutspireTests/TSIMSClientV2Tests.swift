@@ -35,6 +35,7 @@ private class TSIMSMockURLProtocol: URLProtocol {
 final class TSIMSClientV2Tests: XCTestCase {
     struct TestData: Codable, Equatable { let value: String; enum CodingKeys: String, CodingKey { case value = "Foo" } }
 
+    @MainActor
     override func setUp() {
         super.setUp()
         let config = URLSessionConfiguration.ephemeral
@@ -45,6 +46,7 @@ final class TSIMSClientV2Tests: XCTestCase {
         #endif
     }
 
+    @MainActor
     func test_getJSONAsync_success() async throws {
         guard #available(iOS 15.0, *) else { return }
         let payload = ["ResultType": 0, "Message": "ok", "Data": ["Foo": "bar"]] as [String: Any]
@@ -59,6 +61,7 @@ final class TSIMSClientV2Tests: XCTestCase {
         XCTAssertEqual(resp.data?.value, "bar")
     }
 
+    @MainActor
     func test_getJSONAsync_unauthorized_status() async {
         guard #available(iOS 15.0, *) else { return }
         TSIMSMockURLProtocol.responseData = Data("Unauthorized".utf8)
@@ -76,6 +79,7 @@ final class TSIMSClientV2Tests: XCTestCase {
         }
     }
 
+    @MainActor
     func test_getJSONAsync_unauthorized_html() async {
         guard #available(iOS 15.0, *) else { return }
         // 200 OK but HTML content should be treated as unauthorized according to client logic

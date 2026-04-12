@@ -328,6 +328,8 @@ final class TSIMSClientV2 {
         do {
             let (data, response) = try await session.data(for: request)
             return try handleResponseAsync(data: data, response: response)
+        } catch let error as NetworkError {
+            throw error
         } catch {
             throw NetworkError.requestFailed(error)
         }
@@ -362,6 +364,8 @@ final class TSIMSClientV2 {
         do {
             let (data, response) = try await session.data(for: request)
             return try handleResponseAsync(data: data, response: response)
+        } catch let error as NetworkError {
+            throw error
         } catch {
             throw NetworkError.requestFailed(error)
         }
