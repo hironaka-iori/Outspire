@@ -21,6 +21,9 @@ struct OutspireApp: App {
     // Add gradient manager
     @StateObject private var gradientManager = GradientManager()
 
+    // Shared classtable view model
+    @StateObject private var classtableViewModel = ClasstableViewModel()
+
     // Add connectivity manager
     @StateObject private var connectivityManager = ConnectivityManager.shared
 
@@ -47,6 +50,7 @@ struct OutspireApp: App {
                 .environmentObject(settingsManager) // Add settings manager
                 .environmentObject(urlSchemeHandler) // Add URL scheme handler
                 .environmentObject(gradientManager) // Add gradient manager to environment
+                .environmentObject(classtableViewModel) // Shared classtable view model
                 .environmentObject(connectivityManager) // Add connectivity manager
                 .installToast(position: .top)
                 .withConnectivityAlerts() // Add the connectivity alerts

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ModernClasstableView: View {
-    @StateObject private var viewModel = ClasstableViewModel()
+    @EnvironmentObject var viewModel: ClasstableViewModel
     @State private var selectedDay: Int = ModernClasstableView.currentWeekdayIndex()
 
     static func currentWeekdayIndex() -> Int {
