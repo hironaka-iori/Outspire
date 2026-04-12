@@ -17,8 +17,8 @@ struct ClassWidgetProvider: TimelineProvider {
             date: Date(),
             status: .ongoing,
             currentClass: ScheduledClass(
-                periodNumber: 3, className: "Mathematics", roomNumber: "301",
-                teacherName: "Mr. Wang", startTime: Date(), endTime: Date().addingTimeInterval(2400),
+                periodNumber: 3, className: "Mathematics", roomNumber: "A108",
+                teacherName: "Yu Song", startTime: Date(), endTime: Date().addingTimeInterval(2400),
                 isSelfStudy: false
             ),
             upcomingClasses: [],

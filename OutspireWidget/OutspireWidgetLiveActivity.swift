@@ -64,10 +64,8 @@ private struct LockScreenView: View {
     let state: ClassActivityAttributes.ContentState
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-
-            HStack(alignment: .top) {
+        VStack(spacing: 2) {
+            HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(state.className)
                         .font(WidgetFont.title())
@@ -95,6 +93,7 @@ private struct LockScreenView: View {
                         .tracking(-1)
                         .foregroundStyle(countdownColor(for: state))
                         .monospacedDigit()
+                        .multilineTextAlignment(.trailing)
                         .frame(width: 90, alignment: .trailing)
                 }
             }
@@ -111,7 +110,7 @@ private struct LockScreenView: View {
                     TimelineView(.periodic(from: .now, by: 10)) { timeline in
                         let prog = progress(for: state, at: timeline.date)
                         Capsule()
-                            .fill(progressGradient(for: state))
+                            .fill(stateColor(for: state))
                             .frame(width: geo.size.width * prog, height: 3)
                     }
                 }
@@ -143,8 +142,9 @@ private struct CompactLeadingView: View {
                 progress: progress(for: state, at: timeline.date),
                 color: stateColor(for: state),
                 lineWidth: 2,
-                size: 18
+                size: 14
             )
+            .padding(1)
         }
     }
 }
@@ -154,11 +154,10 @@ private struct CompactTrailingView: View {
 
     var body: some View {
         Text(timerInterval: state.periodStart ... state.periodEnd, countsDown: true)
-            .font(WidgetFont.number(size: 15))
-            .tracking(-0.5)
+            .font(WidgetFont.number(size: 14))
             .foregroundStyle(stateColor(for: state))
             .monospacedDigit()
-            .frame(width: 52, alignment: .trailing)
+            .frame(width: 44)
     }
 }
 
@@ -183,41 +182,45 @@ struct OutspireWidgetLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ClassActivityAttributes.self) { context in
             LockScreenView(state: context.state)
-                .activityBackgroundTint(Color(red: 0.11, green: 0.11, blue: 0.12))
+                .activityBackgroundTint(.black.opacity(0.75))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(context.state.className)
-                            .font(WidgetFont.title(size: 16))
+                            .font(WidgetFont.title(size: 15))
                             .tracking(-0.2)
                             .foregroundStyle(.white)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.85)
 
                         if !context.state.roomNumber.isEmpty {
                             Text(context.state.roomNumber)
-                                .font(WidgetFont.caption())
+                                .font(WidgetFont.caption(size: 10))
                                 .tracking(0.5)
                                 .foregroundStyle(.white.opacity(0.4))
                         }
                     }
+                    .frame(maxHeight: .infinity, alignment: .leading)
                     .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(countdownLabel(for: context.state.status))
-                            .font(WidgetFont.caption())
+                            .font(WidgetFont.caption(size: 10))
                             .tracking(0.5)
                             .foregroundStyle(.white.opacity(0.4))
                             .textCase(.uppercase)
 
                         Text(timerInterval: context.state.periodStart ... context.state.periodEnd, countsDown: true)
-                            .font(WidgetFont.number(size: 28))
+                            .font(WidgetFont.number(size: 22))
                             .tracking(-1)
                             .foregroundStyle(stateColor(for: context.state))
                             .monospacedDigit()
+                            .multilineTextAlignment(.trailing)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -230,13 +233,14 @@ struct OutspireWidgetLiveActivity: Widget {
                             TimelineView(.periodic(from: .now, by: 10)) { timeline in
                                 let prog = progress(for: context.state, at: timeline.date)
                                 Capsule()
-                                    .fill(progressGradient(for: context.state))
+                                    .fill(stateColor(for: context.state))
                                     .frame(width: geo.size.width * prog, height: 3)
                             }
                         }
                     }
                     .frame(height: 3)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
                 }
             } compactLeading: {
                 CompactLeadingView(state: context.state)
