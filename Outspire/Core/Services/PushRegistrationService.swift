@@ -60,7 +60,13 @@ enum PushRegistrationService {
             schedule: schedule
         )
 
-        post(endpoint: "/register", body: payload, completion: completion)
+        post(endpoint: "/register", body: payload) { success in
+            if success {
+                // A successful register supersedes any pending unregister from a previous logout
+                UserDefaults.standard.removeObject(forKey: pendingUnregisterKey)
+            }
+            completion?(success)
+        }
     }
 
     static func pause(resumeDate: String? = nil) {

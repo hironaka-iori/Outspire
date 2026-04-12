@@ -739,7 +739,8 @@ async function handleRegister(
     { expirationTtl: 30 * 24 * 60 * 60 }
   );
 
-  // Immediately plan this device's future dispatch slots for today
+  // Remove any stale dispatch slots from a previous schedule, then rebuild
+  await removeDeviceFromDispatch(env, body.deviceId);
   await planDeviceForToday(env, body.deviceId, registration);
 
   return new Response(JSON.stringify({ ok: true }), {
