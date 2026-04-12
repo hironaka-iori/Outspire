@@ -383,13 +383,14 @@ struct TodayView: View {
 
     private func handleAuthChange(_ isAuthenticated: Bool) {
         if isAuthenticated {
-            // Freshly authenticated (login or background reauth) — load timetable if needed
-            if classtableViewModel.timetable.isEmpty {
-                let cacheStatus = classtableViewModel.getCacheStatus()
-                if !cacheStatus.hasValidYearsCache || !cacheStatus.hasValidTimetableCache {
-                    isLoading = true
-                    classtableViewModel.fetchYears()
-                }
+            // Freshly authenticated (login or background reauth) — load timetable if needed.
+            // Only fetch if timetable is empty AND years haven't started loading yet
+            // (handleYearsChange will trigger fetchTimetable when years arrive).
+            if classtableViewModel.timetable.isEmpty, classtableViewModel.years.isEmpty,
+               !classtableViewModel.isLoadingYears
+            {
+                isLoading = true
+                classtableViewModel.fetchYears()
             }
         } else {
             classtableViewModel.timetable = []
