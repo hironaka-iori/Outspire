@@ -77,6 +77,9 @@ struct OutspireApp: App {
 
                         // Sync auth state to widget
                         WidgetDataManager.updateAuthState(AuthServiceV2.shared.isAuthenticated)
+
+                        // Retry push registration if it hasn't succeeded yet
+                        ClassActivityManager.shared.retryRegistrationIfNeeded()
                     }
                 }
                 // Handle URLs when app is already running

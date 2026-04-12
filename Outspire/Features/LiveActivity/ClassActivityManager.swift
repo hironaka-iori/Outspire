@@ -138,6 +138,14 @@ final class ClassActivityManager: ObservableObject {
 
     // MARK: - Worker Registration
 
+    /// Called on scenePhase .active to re-attempt registration if it
+    /// never succeeded (e.g. network was down on launch).
+    func retryRegistrationIfNeeded() {
+        guard !hasRegistered else { return }
+        retryCount = 0
+        registerIfReady()
+    }
+
     /// Called externally when the timetable data becomes available
     /// (e.g. after fetch completes, which may be after startActivity).
     func setTimetable(_ timetable: [[String]]) {
