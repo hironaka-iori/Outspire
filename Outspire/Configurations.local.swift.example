@@ -10,4 +10,7 @@ extension Configuration {
     static var llmBaseURL: String {
         return "https://api.endpoint.com/v1"
     }
+    static var pushWorkerAuthSecret: String {
+        return "YOUR_PUSH_WORKER_SECRET"
+    }
 }

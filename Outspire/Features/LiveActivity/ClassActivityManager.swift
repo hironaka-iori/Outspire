@@ -120,6 +120,9 @@ final class ClassActivityManager: ObservableObject {
         registerIfReady()
     }
 
+    private var retryCount = 0
+    private static let maxRetries = 2
+
     private func registerIfReady() {
         guard !hasRegistered,
               let startToken = lastPushStartToken,
@@ -129,14 +132,30 @@ final class ClassActivityManager: ObservableObject {
               let studentInfo = StudentInfo(userCode: userCode)
         else { return }
 
+        let timetable = currentTimetable
         PushRegistrationService.register(
             pushStartToken: startToken,
             pushUpdateToken: updateToken,
             studentInfo: studentInfo,
-            timetable: currentTimetable
-        )
-        hasRegistered = true
-        Log.app.info("Registered with push worker (deviceId: \(PushRegistrationService.deviceId.prefix(8))...)")
+            timetable: timetable
+        ) { [weak self] success in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if success {
+                    self.hasRegistered = true
+                    self.retryCount = 0
+                    Log.app.info("Registered with push worker (deviceId: \(PushRegistrationService.deviceId.prefix(8))...)")
+                } else if self.retryCount < Self.maxRetries {
+                    self.retryCount += 1
+                    Log.app.warning("Push worker registration failed, retrying (\(self.retryCount)/\(Self.maxRetries))...")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                        self.registerIfReady()
+                    }
+                } else {
+                    Log.app.error("Push worker registration failed after \(Self.maxRetries) retries")
+                }
+            }
+        }
     }
 
     // MARK: - Update

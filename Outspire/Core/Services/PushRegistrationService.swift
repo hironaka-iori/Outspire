@@ -36,7 +36,8 @@ enum PushRegistrationService {
         pushStartToken: String,
         pushUpdateToken: String,
         studentInfo: StudentInfo,
-        timetable: [[String]]
+        timetable: [[String]],
+        completion: ((Bool) -> Void)? = nil
     ) {
         let schedule = buildWeekSchedule(from: timetable)
 
@@ -49,7 +50,7 @@ enum PushRegistrationService {
             schedule: schedule
         )
 
-        post(endpoint: "/register", body: payload)
+        post(endpoint: "/register", body: payload, completion: completion)
     }
 
     static func pause(resumeDate: String? = nil) {
@@ -77,30 +78,42 @@ enum PushRegistrationService {
 
     // MARK: - Private
 
-    private static func post<T: Encodable>(endpoint: String, body: T) {
-        guard let url = URL(string: workerBaseURL + endpoint) else { return }
+    private static func post<T: Encodable>(
+        endpoint: String,
+        body: T,
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        guard let url = URL(string: workerBaseURL + endpoint) else {
+            completion?(false)
+            return
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(Configuration.pushWorkerAuthSecret, forHTTPHeaderField: "x-auth-secret")
         request.timeoutInterval = 10
 
         do {
             request.httpBody = try JSONEncoder().encode(body)
         } catch {
             Log.net.error("Failed to encode push registration: \(error.localizedDescription)")
+            completion?(false)
             return
         }
 
         URLSession.shared.dataTask(with: request) { _, response, error in
             if let error {
                 Log.net.error("Push registration failed: \(error.localizedDescription)")
+                completion?(false)
                 return
             }
             if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                 Log.net.info("Push registration successful for \(endpoint)")
+                completion?(true)
             } else {
                 Log.net.warning("Push registration returned non-200")
+                completion?(false)
             }
         }.resume()
     }
