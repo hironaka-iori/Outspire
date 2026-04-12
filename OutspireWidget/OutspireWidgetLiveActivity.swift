@@ -2,53 +2,41 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-// MARK: - Color Helpers
+// MARK: - Helpers
 
 private func stateColor(for state: ClassActivityAttributes.ContentState) -> Color {
     switch state.status {
-    case .ongoing:
-        return SubjectColors.color(for: state.className)
-    case .ending:
-        return .orange
-    case .upcoming:
-        return .green
-    case .break:
-        return SubjectColors.color(for: state.nextClassName ?? state.className)
-    case .event:
-        return .purple
+    case .ongoing: SubjectColors.color(for: state.className)
+    case .ending: .orange
+    case .upcoming: .green
+    case .break: SubjectColors.color(for: state.nextClassName ?? state.className)
+    case .event: .purple
     }
 }
 
 private func countdownColor(for state: ClassActivityAttributes.ContentState) -> Color {
     switch state.status {
-    case .ongoing:
-        return .white
-    case .ending:
-        return .orange
-    case .upcoming, .break, .event:
-        return .white.opacity(0.4)
+    case .ongoing: .white
+    case .ending: .orange
+    case .upcoming, .break, .event: .white.opacity(0.4)
     }
 }
 
 private func countdownLabel(for status: ClassActivityAttributes.ContentState.Status) -> String {
     switch status {
-    case .ongoing, .ending:
-        return "ENDS IN"
-    case .upcoming, .break:
-        return "STARTS IN"
-    case .event:
-        return "TODAY"
+    case .ongoing, .ending: "ENDS IN"
+    case .upcoming, .break: "STARTS IN"
+    case .event: "TODAY"
     }
 }
 
 private func progress(for state: ClassActivityAttributes.ContentState, at date: Date) -> Double {
     let total = state.periodEnd.timeIntervalSince(state.periodStart)
     guard total > 0 else { return 0 }
-    let elapsed = date.timeIntervalSince(state.periodStart)
-    return min(max(elapsed / total, 0), 1)
+    return min(max(date.timeIntervalSince(state.periodStart) / total, 0), 1)
 }
 
-// MARK: - Progress Bar (shared between Lock Screen and DI Expanded)
+// MARK: - Progress Bar
 
 private struct ProgressBar: View {
     let state: ClassActivityAttributes.ContentState
@@ -56,22 +44,17 @@ private struct ProgressBar: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.08))
-                    .frame(height: 3)
+                Capsule().fill(.white.opacity(0.08))
 
                 TimelineView(.periodic(from: .now, by: 10)) { timeline in
-                    let prog = progress(for: state, at: timeline.date)
-                    if prog > 0 {
+                    let p = progress(for: state, at: timeline.date)
+                    if p > 0 {
                         Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [stateColor(for: state), stateColor(for: state).opacity(0.5)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: max(geo.size.width * prog, 3), height: 3)
+                            .fill(LinearGradient(
+                                colors: [stateColor(for: state), stateColor(for: state).opacity(0.5)],
+                                startPoint: .leading, endPoint: .trailing
+                            ))
+                            .frame(width: max(geo.size.width * p, 3))
                     }
                 }
             }
@@ -80,19 +63,14 @@ private struct ProgressBar: View {
     }
 }
 
-// MARK: - Lock Screen View
-// Matches v3 mockup: la-card with padding 16px 20px 14px
-// la-row: flex center, left (title + caption), right (label + number)
-// progress bar at bottom with margin-top 12px
+// MARK: - Lock Screen
 
 private struct LockScreenView: View {
     let state: ClassActivityAttributes.ContentState
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Main row — vertically centered
+        VStack(spacing: 12) {
             HStack {
-                // Left: class name + room
                 VStack(alignment: .leading, spacing: 3) {
                     Text(state.className)
                         .font(WidgetFont.title())
@@ -108,7 +86,6 @@ private struct LockScreenView: View {
 
                 Spacer(minLength: 16)
 
-                // Right: label + countdown
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(countdownLabel(for: state.status))
                         .font(WidgetFont.caption())
@@ -123,73 +100,20 @@ private struct LockScreenView: View {
                 }
             }
 
-            // Progress bar — 12pt gap from row
             ProgressBar(state: state)
-                .padding(.top, 12)
         }
-        .padding(.top, 16)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 14)
+        .padding(16)
     }
 
     private var subtitle: String {
-        switch state.status {
-        case .break:
+        if case .break = state.status {
             return state.nextClassName.map { "Next: \($0)" } ?? ""
-        default:
-            return state.roomNumber.isEmpty ? "" : state.roomNumber
         }
+        return state.roomNumber.isEmpty ? "" : state.roomNumber
     }
 }
 
-// MARK: - Dynamic Island Compact
-
-private struct CompactLeadingView: View {
-    let state: ClassActivityAttributes.ContentState
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 10)) { timeline in
-            ProgressRing(
-                progress: progress(for: state, at: timeline.date),
-                color: stateColor(for: state),
-                lineWidth: 2,
-                size: 14
-            )
-        }
-    }
-}
-
-private struct CompactTrailingView: View {
-    let state: ClassActivityAttributes.ContentState
-
-    var body: some View {
-        // Only countdown, no class name
-        Text(timerInterval: state.periodStart ... state.periodEnd, countsDown: true)
-            .font(WidgetFont.number(size: 14))
-            .tracking(-0.5)
-            .foregroundStyle(stateColor(for: state))
-            .monospacedDigit()
-    }
-}
-
-// MARK: - Dynamic Island Minimal
-
-private struct MinimalView: View {
-    let state: ClassActivityAttributes.ContentState
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 10)) { timeline in
-            ProgressRing(
-                progress: progress(for: state, at: timeline.date),
-                color: stateColor(for: state),
-                lineWidth: 2,
-                size: 14
-            )
-        }
-    }
-}
-
-// MARK: - Widget Configuration
+// MARK: - Widget
 
 struct OutspireWidgetLiveActivity: Widget {
     var body: some WidgetConfiguration {
@@ -199,47 +123,67 @@ struct OutspireWidgetLiveActivity: Widget {
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
-                // Expanded — same layout as lock screen but scaled down
-                DynamicIslandExpandedRegion(.leading) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(context.state.className)
-                            .font(WidgetFont.title(size: 15))
-                            .tracking(-0.2)
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-
-                        if !context.state.roomNumber.isEmpty {
-                            Text(context.state.roomNumber)
-                                .font(WidgetFont.caption(size: 10))
-                                .tracking(0.5)
-                                .foregroundStyle(.white.opacity(0.4))
-                        }
-                    }
-                }
-                DynamicIslandExpandedRegion(.trailing) {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(countdownLabel(for: context.state.status))
-                            .font(WidgetFont.caption(size: 10))
-                            .tracking(0.5)
-                            .foregroundStyle(.white.opacity(0.4))
-
-                        Text(timerInterval: context.state.periodStart ... context.state.periodEnd, countsDown: true)
-                            .font(WidgetFont.number(size: 24))
-                            .tracking(-1)
-                            .foregroundStyle(stateColor(for: context.state))
-                            .monospacedDigit()
-                    }
-                }
                 DynamicIslandExpandedRegion(.bottom) {
-                    ProgressBar(state: context.state)
-                        .padding(.top, 4)
+                    VStack(spacing: 8) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(context.state.className)
+                                    .font(WidgetFont.title(size: 15))
+                                    .tracking(-0.2)
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+
+                                if !context.state.roomNumber.isEmpty {
+                                    Text(context.state.roomNumber)
+                                        .font(WidgetFont.caption(size: 10))
+                                        .tracking(0.5)
+                                        .foregroundStyle(.white.opacity(0.4))
+                                }
+                            }
+
+                            Spacer(minLength: 12)
+
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(countdownLabel(for: context.state.status))
+                                    .font(WidgetFont.caption(size: 10))
+                                    .tracking(0.5)
+                                    .foregroundStyle(.white.opacity(0.4))
+
+                                Text(timerInterval: context.state.periodStart ... context.state.periodEnd, countsDown: true)
+                                    .font(WidgetFont.number(size: 24))
+                                    .tracking(-1)
+                                    .foregroundStyle(stateColor(for: context.state))
+                                    .monospacedDigit()
+                            }
+                        }
+
+                        ProgressBar(state: context.state)
+                    }
                 }
             } compactLeading: {
-                CompactLeadingView(state: context.state)
+                TimelineView(.periodic(from: .now, by: 10)) { timeline in
+                    ProgressRing(
+                        progress: progress(for: context.state, at: timeline.date),
+                        color: stateColor(for: context.state),
+                        lineWidth: 2,
+                        size: 12
+                    )
+                }
             } compactTrailing: {
-                CompactTrailingView(state: context.state)
+                Text(timerInterval: context.state.periodStart ... context.state.periodEnd, countsDown: true)
+                    .font(WidgetFont.number(size: 13))
+                    .tracking(-0.5)
+                    .foregroundStyle(stateColor(for: context.state))
+                    .monospacedDigit()
             } minimal: {
-                MinimalView(state: context.state)
+                TimelineView(.periodic(from: .now, by: 10)) { timeline in
+                    ProgressRing(
+                        progress: progress(for: context.state, at: timeline.date),
+                        color: stateColor(for: context.state),
+                        lineWidth: 2,
+                        size: 12
+                    )
+                }
             }
             .widgetURL(URL(string: "outspire://today"))
         }
