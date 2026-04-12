@@ -21,12 +21,10 @@ struct LiveActivityDebugView: View {
                     Text(manager.isSupported ? "Yes" : "No")
                         .foregroundStyle(manager.isSupported ? .green : .red)
                 }
-                HStack {
-                    Text("Enabled")
-                    Spacer()
-                    Text(manager.isEnabled ? "Yes" : "No")
-                        .foregroundStyle(manager.isEnabled ? .green : .secondary)
-                }
+                Toggle("Enabled", isOn: Binding(
+                    get: { UserDefaults.standard.bool(forKey: "liveActivityEnabled") },
+                    set: { UserDefaults.standard.set($0, forKey: "liveActivityEnabled") }
+                ))
             }
 
             Section("Test Scenarios") {
@@ -65,7 +63,7 @@ struct LiveActivityDebugView: View {
         // Small delay to let the old one dismiss
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             let schedule = scenario.buildSchedule()
-            manager.startActivity(schedule: schedule)
+            manager.startActivity(schedule: schedule, skipEnabledCheck: true)
         }
     }
 }

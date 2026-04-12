@@ -34,8 +34,8 @@ final class ClassActivityManager: ObservableObject {
 
     // MARK: - Start
 
-    func startActivity(schedule: [ScheduledClass]) {
-        guard isEnabled, isSupported, !schedule.isEmpty else { return }
+    func startActivity(schedule: [ScheduledClass], skipEnabledCheck: Bool = false) {
+        guard skipEnabledCheck || isEnabled, isSupported, !schedule.isEmpty else { return }
         guard currentActivity == nil else {
             Log.app.debug("Live Activity already running, updating instead")
             updateForCurrentState(schedule: schedule)
