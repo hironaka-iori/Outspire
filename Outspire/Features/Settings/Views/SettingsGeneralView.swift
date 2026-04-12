@@ -5,7 +5,6 @@ struct SettingsGeneralView: View {
     @Environment(\.presentToast) var presentToast
     @State private var hideAcademicScore = Configuration.hideAcademicScore
     @State private var showMondayClass = Configuration.showMondayClass
-    @State private var showSecondsInLongCountdown = Configuration.showSecondsInLongCountdown
     @State private var showClearCacheConfirmation = false
     @State private var showCacheCleared = false
     @Environment(\.colorScheme) private var colorScheme
@@ -19,12 +18,6 @@ struct SettingsGeneralView: View {
                     Configuration.showMondayClass = newValue
                 }
 
-                Toggle(isOn: $showSecondsInLongCountdown) {
-                    Label("Always Show Seconds", systemImage: "timer")
-                }
-                .onChange(of: showSecondsInLongCountdown) { _, newValue in
-                    Configuration.showSecondsInLongCountdown = newValue
-                }
             } header: {
                 Text("Class Schedule")
             } footer: {

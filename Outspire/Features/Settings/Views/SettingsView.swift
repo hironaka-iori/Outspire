@@ -3,8 +3,6 @@ import SwiftUI
 struct SettingsView: View {
     @Binding var showSettingsSheet: Bool
     var isModal: Bool = false
-    @ObservedObject private var authV2 = AuthServiceV2.shared
-    @State private var viewRefreshID = UUID()
     @State private var showOnboardingSheet = false
     enum SettingsMenu: String, Hashable, CaseIterable {
         case account
@@ -29,7 +27,9 @@ struct SettingsView: View {
             Section {
                 settingsLink(.general)
                 settingsLink(.notifications)
-                settingsLink(.gradients)
+                #if DEBUG
+                    settingsLink(.gradients)
+                #endif
                 settingsLink(.about)
                 settingsLink(.license)
             }
@@ -150,7 +150,6 @@ struct SettingsView: View {
                 }
             #endif
         }
-        .id(viewRefreshID)
         .applyScrollEdgeEffect()
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
@@ -164,12 +163,6 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(
-                for: Notification.Name.authenticationStatusChanged)
-        ) { _ in
-            DispatchQueue.main.async { viewRefreshID = UUID() }
         }
         .sheet(isPresented: $showOnboardingSheet) {
             OnboardingView(isPresented: $showOnboardingSheet)
