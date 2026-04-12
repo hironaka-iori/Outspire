@@ -11,14 +11,27 @@ final class ClassActivityManager: ObservableObject {
     private var lastPushStartToken: String?
     private var lastPushUpdateToken: String?
 
+    /// The full timetable grid, kept so we can register with the Worker
+    /// whenever tokens arrive (which may happen after startActivity returns).
+    private var currentTimetable: [[String]] = []
+
+    /// Whether we already sent a register request for the current token pair.
+    /// Reset when either token changes.
+    private var hasRegistered = false
+
     private init() {
-        // Observe pushToStartToken on launch (for remote start capability)
+        // Observe pushToStartToken once — this single Task lives for the
+        // entire app lifetime and covers both local and remote LA start.
         if #available(iOS 17.2, *) {
             Task {
                 for await token in Activity<ClassActivityAttributes>.pushToStartTokenUpdates {
                     let tokenString = token.map { String(format: "%02x", $0) }.joined()
                     Log.app.debug("LA pushToStart token: \(tokenString.prefix(20))...")
-                    self.lastPushStartToken = tokenString
+                    if self.lastPushStartToken != tokenString {
+                        self.lastPushStartToken = tokenString
+                        self.hasRegistered = false
+                        self.registerIfReady()
+                    }
                 }
             }
         }
@@ -34,8 +47,14 @@ final class ClassActivityManager: ObservableObject {
 
     // MARK: - Start
 
-    func startActivity(schedule: [ScheduledClass], skipEnabledCheck: Bool = false) {
+    func startActivity(schedule: [ScheduledClass], timetable: [[String]] = [], skipEnabledCheck: Bool = false) {
         guard skipEnabledCheck || isEnabled, isSupported, !schedule.isEmpty else { return }
+
+        // Store timetable for Worker registration
+        if !timetable.isEmpty {
+            currentTimetable = timetable
+        }
+
         guard currentActivity == nil else {
             Log.app.debug("Live Activity already running, updating instead")
             updateForCurrentState(schedule: schedule)
@@ -69,28 +88,21 @@ final class ClassActivityManager: ObservableObject {
             isActivityRunning = true
             Log.app.info("Live Activity started for \(firstClass.className)")
 
-            // Observe push token and register with CF Worker
+            // Observe push update token (per-activity, so start a new Task each time)
             if let activity = currentActivity {
                 Task {
                     for await token in activity.pushTokenUpdates {
                         let tokenString = token.map { String(format: "%02x", $0) }.joined()
                         Log.app.debug("LA push update token: \(tokenString.prefix(20))...")
-                        self.lastPushUpdateToken = tokenString
-                        self.registerWithWorkerIfReady(timetable: schedule.map { _ in [[String]]() }.first ?? [])
+                        if self.lastPushUpdateToken != tokenString {
+                            self.lastPushUpdateToken = tokenString
+                            self.hasRegistered = false
+                            self.registerIfReady()
+                        }
                     }
                 }
             }
-
-            // Also observe pushToStartToken for remote start
-            if #available(iOS 17.2, *) {
-                Task {
-                    for await token in Activity<ClassActivityAttributes>.pushToStartTokenUpdates {
-                        let tokenString = token.map { String(format: "%02x", $0) }.joined()
-                        Log.app.debug("LA pushToStart token: \(tokenString.prefix(20))...")
-                        self.lastPushStartToken = tokenString
-                    }
-                }
-            }
+            // pushToStartToken is already observed in init — no duplicate needed
         } catch {
             Log.app.error("Failed to start Live Activity: \(error.localizedDescription)")
         }
@@ -98,27 +110,33 @@ final class ClassActivityManager: ObservableObject {
 
     // MARK: - Worker Registration
 
-    func registerWithWorker(timetable: [[String]]) {
-        guard let startToken = lastPushStartToken,
+    /// Called externally when the timetable data becomes available
+    /// (e.g. after fetch completes, which may be after startActivity).
+    func setTimetable(_ timetable: [[String]]) {
+        guard !timetable.isEmpty else { return }
+        currentTimetable = timetable
+        // Timetable changed — allow a fresh registration
+        hasRegistered = false
+        registerIfReady()
+    }
+
+    private func registerIfReady() {
+        guard !hasRegistered,
+              let startToken = lastPushStartToken,
               let updateToken = lastPushUpdateToken,
+              !currentTimetable.isEmpty,
               let userCode = AuthServiceV2.shared.user?.userCode,
               let studentInfo = StudentInfo(userCode: userCode)
-        else {
-            Log.app.debug("Not ready to register with worker (missing tokens or user info)")
-            return
-        }
+        else { return }
 
         PushRegistrationService.register(
             pushStartToken: startToken,
             pushUpdateToken: updateToken,
             studentInfo: studentInfo,
-            timetable: timetable
+            timetable: currentTimetable
         )
-    }
-
-    private func registerWithWorkerIfReady(timetable: [[String]]) {
-        guard lastPushStartToken != nil, lastPushUpdateToken != nil else { return }
-        registerWithWorker(timetable: timetable)
+        hasRegistered = true
+        Log.app.info("Registered with push worker (deviceId: \(PushRegistrationService.deviceId.prefix(8))...)")
     }
 
     // MARK: - Update
@@ -146,15 +164,30 @@ final class ClassActivityManager: ObservableObject {
                 nextClassName: nextAfter?.className
             )
         } else if let next = nextClass {
-            let nextAfterNext = schedule.first(where: { $0.startTime > next.startTime })
-            state = ClassActivityAttributes.ContentState(
-                className: next.className,
-                roomNumber: next.roomNumber,
-                status: .upcoming,
-                periodStart: next.startTime,
-                periodEnd: next.endTime,
-                nextClassName: nextAfterNext?.className
-            )
+            let previousClass = schedule.last(where: { $0.endTime <= now })
+            let gap = previousClass.map { next.startTime.timeIntervalSince($0.endTime) } ?? 0
+            let isLunchBreak = gap > 1800
+            let isBreak = previousClass != nil
+
+            if isBreak {
+                state = ClassActivityAttributes.ContentState(
+                    className: isLunchBreak ? "Lunch Break" : "Break",
+                    roomNumber: "",
+                    status: .break,
+                    periodStart: previousClass!.endTime,
+                    periodEnd: next.startTime,
+                    nextClassName: next.className
+                )
+            } else {
+                state = ClassActivityAttributes.ContentState(
+                    className: next.className,
+                    roomNumber: next.roomNumber,
+                    status: .upcoming,
+                    periodStart: next.startTime,
+                    periodEnd: next.endTime,
+                    nextClassName: nil
+                )
+            }
         } else {
             // All classes done
             endActivity()
@@ -190,5 +223,7 @@ final class ClassActivityManager: ObservableObject {
         }
         currentActivity = nil
         isActivityRunning = false
+        currentTimetable = []
+        hasRegistered = false
     }
 }

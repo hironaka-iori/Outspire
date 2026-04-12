@@ -4,8 +4,20 @@ import OSLog
 /// Sends push tokens and schedule data to the CF Worker for Live Activity push delivery.
 enum PushRegistrationService {
     private static let workerBaseURL = "https://outspire-apns.wrye.dev"
+    private static let deviceIdKey = "push_device_id"
+
+    /// Stable per-device identifier stored in Keychain. Survives app reinstalls.
+    static var deviceId: String {
+        if let existing = SecureStore.get(deviceIdKey) {
+            return existing
+        }
+        let newId = UUID().uuidString
+        SecureStore.set(newId, for: deviceIdKey)
+        return newId
+    }
 
     struct RegisterPayload: Encodable {
+        let deviceId: String
         let pushStartToken: String
         let pushUpdateToken: String
         let track: String
@@ -29,6 +41,7 @@ enum PushRegistrationService {
         let schedule = buildWeekSchedule(from: timetable)
 
         let payload = RegisterPayload(
+            deviceId: deviceId,
             pushStartToken: pushStartToken,
             pushUpdateToken: pushUpdateToken,
             track: studentInfo.track.rawValue,
@@ -39,19 +52,27 @@ enum PushRegistrationService {
         post(endpoint: "/register", body: payload)
     }
 
-    static func pause(pushStartToken: String, resumeDate: String? = nil) {
+    static func pause(resumeDate: String? = nil) {
         struct Body: Encodable {
-            let pushStartToken: String
+            let deviceId: String
             let resumeDate: String?
         }
-        post(endpoint: "/pause", body: Body(pushStartToken: pushStartToken, resumeDate: resumeDate))
+        post(endpoint: "/pause", body: Body(deviceId: deviceId, resumeDate: resumeDate))
     }
 
-    static func resume(pushStartToken: String) {
+    static func resume() {
         struct Body: Encodable {
-            let pushStartToken: String
+            let deviceId: String
         }
-        post(endpoint: "/resume", body: Body(pushStartToken: pushStartToken))
+        post(endpoint: "/resume", body: Body(deviceId: deviceId))
+    }
+
+    /// Remove this device's registration from the Worker (logout / account switch).
+    static func unregister() {
+        struct Body: Encodable {
+            let deviceId: String
+        }
+        post(endpoint: "/unregister", body: Body(deviceId: deviceId))
     }
 
     // MARK: - Private

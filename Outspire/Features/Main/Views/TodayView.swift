@@ -86,6 +86,8 @@ struct TodayView: View {
         }
         .onChange(of: classtableViewModel.timetable) { _, timetable in
             startLiveActivityIfNeeded(timetable: timetable)
+            // Keep the activity manager's timetable in sync for Worker registration
+            ClassActivityManager.shared.setTimetable(timetable)
         }
         .onChange(of: authV2.isAuthenticated) { _, isAuthenticated in
             handleAuthChange(isAuthenticated)
@@ -386,34 +388,14 @@ struct TodayView: View {
             Configuration.setAsToday = false
         }
 
-        let isTSIMSAuthed = AuthServiceV2.shared.isAuthenticated
-        if isTSIMSAuthed {
-            // Check if we have valid cached data first
+        if AuthServiceV2.shared.isAuthenticated {
+            // Optimistic auth or verified — load from cache or fetch
             let cacheStatus = classtableViewModel.getCacheStatus()
             if !cacheStatus.hasValidYearsCache || !cacheStatus.hasValidTimetableCache {
                 isLoading = true
                 classtableViewModel.fetchYears()
             } else {
-                // Use cached data, no loading needed
                 isLoading = false
-            }
-        } else {
-            // Attempt to restore TSIMS v2 session on cold start to avoid flashing signed-out UI
-            isLoading = true
-            AuthServiceV2.shared.refreshSessionDetailed { result in
-                let authed: Bool
-                switch result {
-                case .valid, .reauthed: authed = true
-                default: authed = false
-                }
-                if authed {
-                    // Proceed with timetable loading if needed
-                    let cacheStatus = self.classtableViewModel.getCacheStatus()
-                    if !cacheStatus.hasValidYearsCache || !cacheStatus.hasValidTimetableCache {
-                        self.classtableViewModel.fetchYears()
-                    }
-                }
-                self.isLoading = false
             }
         }
 
@@ -474,7 +456,16 @@ struct TodayView: View {
     }
 
     private func handleAuthChange(_ isAuthenticated: Bool) {
-        if !isAuthenticated {
+        if isAuthenticated {
+            // Freshly authenticated (login or background reauth) — load timetable if needed
+            if classtableViewModel.timetable.isEmpty {
+                let cacheStatus = classtableViewModel.getCacheStatus()
+                if !cacheStatus.hasValidYearsCache || !cacheStatus.hasValidTimetableCache {
+                    isLoading = true
+                    classtableViewModel.fetchYears()
+                }
+            }
+        } else {
             classtableViewModel.timetable = []
 
             // Reset all schedule settings when logged out

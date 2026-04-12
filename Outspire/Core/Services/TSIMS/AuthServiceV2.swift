@@ -8,17 +8,37 @@ final class AuthServiceV2: ObservableObject {
     static let shared = AuthServiceV2()
     private init() {
         // Restore saved user and check session on launch
+        let hasSavedUser: Bool
         if let data = UserDefaults.standard.data(forKey: "v2User"),
            let saved = try? JSONDecoder().decode(V2User.self, from: data)
         {
             self.user = saved
+            hasSavedUser = true
+        } else {
+            hasSavedUser = false
         }
-        // Verify existing cookies/session
+
+        // If we have a saved user + stored credentials, optimistically mark as
+        // authenticated so the UI can show cached content immediately instead of
+        // flashing the sign-in prompt while the network request completes.
+        let hasCredentials = SecureStore.get(keyUsername) != nil
+            && SecureStore.get(keyPassword) != nil
+        if hasSavedUser && hasCredentials {
+            self.isAuthenticated = true
+            self.isResolvingSession = false
+        }
+
+        // Verify existing cookies/session in the background
         verifySession { ok in
             DispatchQueue.main.async {
-                self.isAuthenticated = ok
+                if ok {
+                    self.isAuthenticated = true
+                    self.startKeepAlive()
+                } else {
+                    // Session expired — try reauth before giving up
+                    self.attemptReauthIfPossible()
+                }
                 self.isResolvingSession = false
-                if ok { self.startKeepAlive() }
             }
         }
 
@@ -155,6 +175,10 @@ final class AuthServiceV2: ObservableObject {
 
         // Clear all app caches to avoid data leaking between accounts
         CacheManager.clearAllCache()
+
+        // Stop Live Activity and unregister from push worker
+        ClassActivityManager.shared.endAllActivities()
+        PushRegistrationService.unregister()
     }
 
     // Fetch profile HTML and parse basic info if missing from login response

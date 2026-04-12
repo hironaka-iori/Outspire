@@ -13,6 +13,7 @@ interface Env {
 // --- Types ---
 
 interface RegisterBody {
+  deviceId: string;
   pushStartToken: string;
   pushUpdateToken: string;
   track: "ibdp" | "alevel";
@@ -28,6 +29,7 @@ interface ClassPeriod {
 }
 
 interface StoredRegistration {
+  pushStartToken: string;
   pushUpdateToken: string;
   track: "ibdp" | "alevel";
   entryYear: string;
@@ -358,11 +360,12 @@ async function handleRegister(
 ): Promise<Response> {
   const body: RegisterBody = await request.json();
 
-  if (!body.pushStartToken || !body.schedule) {
+  if (!body.deviceId || !body.pushStartToken || !body.schedule) {
     return new Response("Missing required fields", { status: 400 });
   }
 
   const registration: StoredRegistration = {
+    pushStartToken: body.pushStartToken,
     pushUpdateToken: body.pushUpdateToken,
     track: body.track,
     entryYear: body.entryYear,
@@ -371,7 +374,7 @@ async function handleRegister(
   };
 
   await env.OUTSPIRE_KV.put(
-    `reg:${body.pushStartToken}`,
+    `reg:${body.deviceId}`,
     JSON.stringify(registration),
     { expirationTtl: 30 * 24 * 60 * 60 } // 30 days
   );
@@ -382,10 +385,10 @@ async function handleRegister(
 }
 
 async function handlePause(request: Request, env: Env): Promise<Response> {
-  const body: { pushStartToken: string; resumeDate?: string } =
+  const body: { deviceId: string; resumeDate?: string } =
     await request.json();
 
-  const key = `reg:${body.pushStartToken}`;
+  const key = `reg:${body.deviceId}`;
   const existing = await env.OUTSPIRE_KV.get(key, "json");
   if (!existing) return new Response("Not found", { status: 404 });
 
@@ -403,9 +406,9 @@ async function handlePause(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleResume(request: Request, env: Env): Promise<Response> {
-  const body: { pushStartToken: string } = await request.json();
+  const body: { deviceId: string } = await request.json();
 
-  const key = `reg:${body.pushStartToken}`;
+  const key = `reg:${body.deviceId}`;
   const existing = await env.OUTSPIRE_KV.get(key, "json");
   if (!existing) return new Response("Not found", { status: 404 });
 
@@ -416,6 +419,23 @@ async function handleResume(request: Request, env: Env): Promise<Response> {
   await env.OUTSPIRE_KV.put(key, JSON.stringify(reg), {
     expirationTtl: 30 * 24 * 60 * 60,
   });
+
+  return new Response(JSON.stringify({ ok: true }), {
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function handleUnregister(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const body: { deviceId: string } = await request.json();
+
+  if (!body.deviceId) {
+    return new Response("Missing deviceId", { status: 400 });
+  }
+
+  await env.OUTSPIRE_KV.delete(`reg:${body.deviceId}`);
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: { "content-type": "application/json" },
@@ -436,7 +456,6 @@ async function handleCron(env: Env): Promise<void> {
     if (!regData) continue;
 
     const reg = regData as StoredRegistration;
-    const token = key.name.replace("reg:", "");
 
     // Decide if today is a school day for this user
     const decision = await decideTodayForUser(env, reg);
@@ -466,10 +485,10 @@ async function handleCron(env: Env): Promise<void> {
       const config = apnsConfig(env);
       const topic = `${env.APNS_BUNDLE_ID}.push-type.liveactivity`;
 
-      if (push.event === "start") {
+      if (push.event === "start" && reg.pushStartToken) {
         // Use pushToStartToken to start Live Activity
         await sendPush(config, {
-          token,
+          token: reg.pushStartToken,
           pushType: "liveactivity",
           topic,
           payload: {
@@ -523,6 +542,8 @@ export default {
       switch (url.pathname) {
         case "/register":
           return handleRegister(request, env);
+        case "/unregister":
+          return handleUnregister(request, env);
         case "/pause":
           return handlePause(request, env);
         case "/resume":

@@ -86,11 +86,25 @@ struct ClassWidgetProvider: TimelineProvider {
             ))
 
             if let next = upcoming.first {
+                // Detect lunch break (gap > 30 min) vs regular break
+                let gap = next.startTime.timeIntervalSince(cls.endTime)
+                let isLunchBreak = gap > 1800
+
+                let breakClass = ScheduledClass(
+                    periodNumber: 0,
+                    className: isLunchBreak ? "Lunch Break" : "Break",
+                    roomNumber: "",
+                    teacherName: "",
+                    startTime: cls.endTime,
+                    endTime: next.startTime,
+                    isSelfStudy: false
+                )
+
                 entries.append(ClassWidgetEntry(
                     date: cls.endTime,
                     status: .break,
-                    currentClass: next,
-                    upcomingClasses: Array(upcoming.dropFirst()),
+                    currentClass: breakClass,
+                    upcomingClasses: [next] + Array(upcoming.dropFirst()),
                     eventName: nil
                 ))
             }
