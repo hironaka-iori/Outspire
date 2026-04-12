@@ -16,10 +16,19 @@ enum PushRegistrationService {
         return newId
     }
 
+    static var isSandbox: Bool {
+        #if DEBUG
+        return true
+        #else
+        return false
+        #endif
+    }
+
     struct RegisterPayload: Encodable {
         let deviceId: String
         let pushStartToken: String
         let pushUpdateToken: String
+        let sandbox: Bool
         let track: String
         let entryYear: String
         let schedule: [String: [Period]]
@@ -45,6 +54,7 @@ enum PushRegistrationService {
             deviceId: deviceId,
             pushStartToken: pushStartToken,
             pushUpdateToken: pushUpdateToken,
+            sandbox: isSandbox,
             track: studentInfo.track.rawValue,
             entryYear: studentInfo.entryYear,
             schedule: schedule

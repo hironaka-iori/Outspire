@@ -7,7 +7,6 @@ interface Env {
   APNS_PRIVATE_KEY: string;
   APNS_BUNDLE_ID: string;
   APNS_AUTH_SECRET: string;
-  APNS_USE_SANDBOX: string; // "true" for development builds, unset for production
   GITHUB_CALENDAR_URL: string;
   HOLIDAY_CN_URL: string;
 }
@@ -18,6 +17,7 @@ interface RegisterBody {
   deviceId: string;
   pushStartToken: string;
   pushUpdateToken: string;
+  sandbox?: boolean;
   track: "ibdp" | "alevel";
   entryYear: string;
   schedule: Record<string, ClassPeriod[]>; // "1".."5" -> periods
@@ -33,6 +33,7 @@ interface ClassPeriod {
 interface StoredRegistration {
   pushStartToken: string;
   pushUpdateToken: string;
+  sandbox: boolean;
   track: "ibdp" | "alevel";
   entryYear: string;
   schedule: Record<string, ClassPeriod[]>;
@@ -70,6 +71,7 @@ interface SpecialDay {
 interface PushJob {
   deviceId: string;
   token: string;
+  sandbox: boolean;
   pushType: "liveactivity";
   topic: string;
   payload: Record<string, unknown>;
@@ -147,7 +149,6 @@ function apnsConfig(env: Env): APNsConfig {
     teamId: env.APNS_TEAM_ID,
     privateKey: env.APNS_PRIVATE_KEY,
     bundleId: env.APNS_BUNDLE_ID,
-    useSandbox: env.APNS_USE_SANDBOX === "true",
   };
 }
 
@@ -452,6 +453,7 @@ function scheduleToPushJobs(
       job = {
         deviceId,
         token: reg.pushStartToken,
+        sandbox: reg.sandbox,
         pushType: "liveactivity",
         topic,
         payload: {
@@ -468,6 +470,7 @@ function scheduleToPushJobs(
       job = {
         deviceId,
         token: reg.pushUpdateToken,
+        sandbox: reg.sandbox,
         pushType: "liveactivity",
         topic,
         payload: {
@@ -482,6 +485,7 @@ function scheduleToPushJobs(
       job = {
         deviceId,
         token: reg.pushUpdateToken,
+        sandbox: reg.sandbox,
         pushType: "liveactivity",
         topic,
         payload: {
@@ -675,7 +679,8 @@ async function handleMinuteDispatch(env: Env): Promise<void> {
       aps["dismissal-date"] = now + 900; // APNs protocol field: Unix timestamp
     }
 
-    const result = await sendPush(config, {
+    const jobConfig = { ...config, useSandbox: job.sandbox };
+    const result = await sendPush(jobConfig, {
       token: job.token,
       pushType: job.pushType,
       topic: job.topic,
@@ -713,6 +718,7 @@ async function handleRegister(
   const registration: StoredRegistration = {
     pushStartToken: body.pushStartToken,
     pushUpdateToken: body.pushUpdateToken,
+    sandbox: body.sandbox ?? false,
     track: body.track,
     entryYear: body.entryYear,
     schedule: body.schedule,
