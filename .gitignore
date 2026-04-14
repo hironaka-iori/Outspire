@@ -69,7 +69,6 @@ buildServer.json
 
 # Local secrets/config (do not commit real API keys)
 Outspire/Configurations.local.swift
-CLAUDE.md
 AGENTS.md
 
 # Superpowers brainstorm temp files
