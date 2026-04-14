@@ -38,6 +38,7 @@ struct SettingsView: View {
                 ShareLink(
                     item: URL(string: "https://apps.apple.com/us/app/outspire/id6743143348")!,
                     message: Text(
+                        // swiftlint:disable:next line_length
                         "\nCheck out Outspire, an app that makes your WFLA life easier!\nClass countdowns, CAS tracking, and more.\n\nDownload now on the App Store."
                     )
                 ) {

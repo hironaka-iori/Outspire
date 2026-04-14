@@ -41,7 +41,13 @@ class DisclaimerManager {
 extension DisclaimerManager {
     /// Get the full disclaimer text
     static var fullDisclaimerText: String {
-        "IMPORTANT: Artificial Intelligence features are provided solely for entertainment purposes. The generated content should NOT be used for any form of academic work. The developer of this app takes no responsibility for any consequences, academic or otherwise, resulting from the use of generated content. Always review and verify all content before submission."
+        """
+        IMPORTANT: Artificial Intelligence features are provided solely for entertainment \
+        purposes. The generated content should NOT be used for any form of academic work. \
+        The developer of this app takes no responsibility for any consequences, academic or \
+        otherwise, resulting from the use of generated content. Always review and verify all \
+        content before submission.
+        """
     }
 
     /// Get the short disclaimer text for post-suggestion reminders

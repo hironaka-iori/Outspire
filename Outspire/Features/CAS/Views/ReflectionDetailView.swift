@@ -198,6 +198,7 @@ struct ReflectionDetailView: View {
                 C_RefID: "1",
                 C_Title: "My Reflection on Leadership",
                 C_Summary: "This is a summary of my experiences as a team leader during the club activities.",
+                // swiftlint:disable:next line_length
                 C_Content: "During this semester, I had the opportunity to lead our team in various activities. It was challenging but rewarding to organize events, delegate tasks, and ensure everyone was engaged and contributing. I learned that effective communication is key to successful leadership, and I've improved my ability to listen to team members and incorporate their feedback. The experience has made me more confident in my leadership abilities while also teaching me to be humble and open to learning from others.",
                 C_Date: "2023-10-15 12:00:00",
                 C_GroupNo: "G123",

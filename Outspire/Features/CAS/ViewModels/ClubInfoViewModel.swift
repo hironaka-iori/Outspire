@@ -224,7 +224,8 @@ class ClubInfoViewModel: ObservableObject {
                     self.members = roster
                     if roster.isEmpty {
                         if Configuration.debugNetworkLogging, !parsed.debugSections.isEmpty {
-                            self.memberLoadError = "Parsed detail but found no members. Sections: \(parsed.debugSections.joined(separator: " | "))"
+                            self.memberLoadError =
+                                "Parsed detail but found no members. Sections: \(parsed.debugSections.joined(separator: " | "))"
                         } else {
                             self.memberLoadError = "Parsed detail but found no members for this club."
                         }
