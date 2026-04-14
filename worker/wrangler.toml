@@ -6,12 +6,16 @@ compatibility_date = "2025-01-01"
 binding = "OUTSPIRE_KV"
 id = "a8ada3a1a83f412ba0c172ef0fb80c63"
 
+[[d1_databases]]
+binding = "OUTSPIRE_DB"
+database_name = "outspire-push"
+database_id = "9b14bbcd-ffed-4ee3-87d5-20aae9497aa3"
+
 [triggers]
-# Daily planner: 22:30 UTC = 06:30 CST — builds one dispatch slot per user
-# Dispatch window: UTC 23:00–01:00 = CST 07:00–09:00
-# Covers 07:45 (cancelled events), 08:00 (normal start), plus 1h buffer
-# Cost: 1 KV read/min on non-school days (null → no-op)
-crons = ["30 22 * * *", "* 23 * * *", "* 0 * * *"]
+# Daily planner: 22:30 UTC = 06:30 CST
+# Dispatch window: UTC 23:00–08:59 = CST 07:00–16:59
+# Covers 07:45 push-to-start through end-of-day update/end pushes.
+crons = ["30 22 * * *", "* 23 * * *", "* 0-8 * * *"]
 
 [vars]
 GITHUB_CALENDAR_URL = "https://raw.githubusercontent.com/Computerization/wfla-events/main"

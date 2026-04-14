@@ -2,6 +2,7 @@ import { sendPush, type APNsConfig } from "./apns";
 
 interface Env {
   OUTSPIRE_KV: KVNamespace;
+  OUTSPIRE_DB: D1Database;
   APNS_KEY_ID: string;
   APNS_TEAM_ID: string;
   APNS_PRIVATE_KEY: string;
@@ -102,9 +103,6 @@ interface PushJob {
   dayKey: string;
 }
 
-type DispatchSlot = PushJob[];
-type DispatchIndex = string[];
-
 interface DayDecision {
   shouldSendPushes: boolean;
   eventName?: string;
@@ -112,7 +110,13 @@ interface DayDecision {
   useWeekday: number;
 }
 
-type ActivityPhase = "upcoming" | "ongoing" | "ending" | "break" | "event" | "done";
+type ActivityPhase =
+  | "upcoming"
+  | "ongoing"
+  | "ending"
+  | "break"
+  | "event"
+  | "done";
 
 interface SnapshotState {
   dayKey: string;
@@ -125,9 +129,35 @@ interface SnapshotState {
   sequence: number;
 }
 
+interface RegistrationRow {
+  device_id: string;
+  push_start_token: string;
+  sandbox: number;
+  track: "ibdp" | "alevel";
+  entry_year: string;
+  schedule_json: string;
+  paused: number;
+  resume_date: string | null;
+  current_activity_json: string | null;
+}
+
+interface DispatchJobRow {
+  day_key: string;
+  time: string;
+  device_id: string;
+  kind: JobKind;
+  token: string;
+  sandbox: number;
+  push_type: "liveactivity";
+  topic: string;
+  payload_json: string;
+}
+
 const APPLE_REFERENCE_DATE = 978307200;
-const SLOT_TTL = 72000;
 const REG_TTL = 30 * 24 * 60 * 60;
+const REGISTRATION_RETENTION_SECONDS = REG_TTL;
+
+let storageReadyPromise: Promise<void> | null = null;
 
 function nowCSTDate(): Date {
   return new Date(Date.now() + 8 * 60 * 60 * 1000);
@@ -161,14 +191,6 @@ function minutesFor(timeStr: string): number {
   return h * 60 + m;
 }
 
-function dispatchSlotKey(dayKey: string, time: string): string {
-  return `dispatch:${dayKey}:${time}`;
-}
-
-function dispatchIndexKey(dayKey: string, deviceId: string): string {
-  return `dispatch-index:${dayKey}:${deviceId}`;
-}
-
 function timeToAppleDate(dayKey: string, timeStr: string): number {
   const { h, m } = parseTime(timeStr);
   const utcMs = Date.parse(`${dayKey}T${formatTime(h, m)}:00+08:00`);
@@ -198,18 +220,337 @@ function apnsConfig(env: Env): APNsConfig {
   };
 }
 
-async function kvListAll(
-  kv: KVNamespace,
-  opts: { prefix: string }
-): Promise<KVNamespaceListKey<unknown>[]> {
-  const allKeys: KVNamespaceListKey<unknown>[] = [];
-  let cursor: string | undefined;
-  do {
-    const res = await kv.list({ prefix: opts.prefix, cursor });
-    allKeys.push(...res.keys);
-    cursor = res.list_complete ? undefined : (res.cursor as string);
-  } while (cursor);
-  return allKeys;
+function nowUnix(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function decodeJSON<T>(raw: string | null): T | undefined {
+  if (!raw) return undefined;
+  return JSON.parse(raw) as T;
+}
+
+function encodeBool(value: boolean): number {
+  return value ? 1 : 0;
+}
+
+function decodeBool(value: number | string | null | undefined): boolean {
+  return Number(value ?? 0) === 1;
+}
+
+function registrationFromRow(row: RegistrationRow): StoredRegistration {
+  return {
+    pushStartToken: row.push_start_token,
+    sandbox: decodeBool(row.sandbox),
+    track: row.track,
+    entryYear: row.entry_year,
+    schedule: decodeJSON<Record<string, ClassPeriod[]>>(row.schedule_json) ?? {},
+    paused: decodeBool(row.paused),
+    resumeDate: row.resume_date ?? undefined,
+    currentActivity: decodeJSON<ActivityRecord>(row.current_activity_json),
+  };
+}
+
+function dispatchJobFromRow(row: DispatchJobRow): PushJob {
+  return {
+    deviceId: row.device_id,
+    token: row.token,
+    sandbox: decodeBool(row.sandbox),
+    pushType: row.push_type,
+    topic: row.topic,
+    payload: decodeJSON<Record<string, unknown>>(row.payload_json) ?? {},
+    kind: row.kind,
+    dayKey: row.day_key,
+  };
+}
+
+
+async function ensureStorageReady(env: Env): Promise<void> {
+  if (!storageReadyPromise) {
+    storageReadyPromise = initializeStorage(env).catch((error) => {
+      storageReadyPromise = null;
+      throw error;
+    });
+  }
+  await storageReadyPromise;
+}
+
+async function initializeStorage(env: Env): Promise<void> {
+  await env.OUTSPIRE_DB.batch([
+    env.OUTSPIRE_DB.prepare(`
+      CREATE TABLE IF NOT EXISTS registrations (
+        device_id TEXT PRIMARY KEY,
+        push_start_token TEXT NOT NULL,
+        sandbox INTEGER NOT NULL DEFAULT 0,
+        track TEXT NOT NULL,
+        entry_year TEXT NOT NULL,
+        schedule_json TEXT NOT NULL,
+        paused INTEGER NOT NULL DEFAULT 0,
+        resume_date TEXT,
+        current_activity_json TEXT,
+        updated_at INTEGER NOT NULL
+      )
+    `),
+    env.OUTSPIRE_DB.prepare(`
+      CREATE TABLE IF NOT EXISTS dispatch_jobs (
+        day_key TEXT NOT NULL,
+        time TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        token TEXT NOT NULL,
+        sandbox INTEGER NOT NULL DEFAULT 0,
+        push_type TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (day_key, time, device_id, kind)
+      )
+    `),
+    env.OUTSPIRE_DB.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_slot
+      ON dispatch_jobs(day_key, time)
+    `),
+    env.OUTSPIRE_DB.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_device_day
+      ON dispatch_jobs(day_key, device_id)
+    `),
+  ]);
+}
+
+async function getRegistration(
+  env: Env,
+  deviceId: string
+): Promise<StoredRegistration | null> {
+  const row = await env.OUTSPIRE_DB.prepare(`
+    SELECT
+      device_id,
+      push_start_token,
+      sandbox,
+      track,
+      entry_year,
+      schedule_json,
+      paused,
+      resume_date,
+      current_activity_json
+    FROM registrations
+    WHERE device_id = ?
+  `)
+    .bind(deviceId)
+    .first<RegistrationRow>();
+  return row ? registrationFromRow(row) : null;
+}
+
+async function listRegistrations(
+  env: Env
+): Promise<Array<{ deviceId: string; reg: StoredRegistration }>> {
+  const result = await env.OUTSPIRE_DB.prepare(`
+    SELECT
+      device_id,
+      push_start_token,
+      sandbox,
+      track,
+      entry_year,
+      schedule_json,
+      paused,
+      resume_date,
+      current_activity_json
+    FROM registrations
+  `).all<RegistrationRow>();
+
+  return (result.results ?? []).map((row) => ({
+    deviceId: row.device_id,
+    reg: registrationFromRow(row),
+  }));
+}
+
+async function putRegistration(
+  env: Env,
+  deviceId: string,
+  reg: StoredRegistration
+): Promise<void> {
+  await env.OUTSPIRE_DB.prepare(`
+    INSERT INTO registrations (
+      device_id,
+      push_start_token,
+      sandbox,
+      track,
+      entry_year,
+      schedule_json,
+      paused,
+      resume_date,
+      current_activity_json,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(device_id) DO UPDATE SET
+      push_start_token = excluded.push_start_token,
+      sandbox = excluded.sandbox,
+      track = excluded.track,
+      entry_year = excluded.entry_year,
+      schedule_json = excluded.schedule_json,
+      paused = excluded.paused,
+      resume_date = excluded.resume_date,
+      current_activity_json = excluded.current_activity_json,
+      updated_at = excluded.updated_at
+  `)
+    .bind(
+      deviceId,
+      reg.pushStartToken,
+      encodeBool(reg.sandbox),
+      reg.track,
+      reg.entryYear,
+      JSON.stringify(reg.schedule),
+      encodeBool(reg.paused),
+      reg.resumeDate ?? null,
+      reg.currentActivity ? JSON.stringify(reg.currentActivity) : null,
+      nowUnix()
+    )
+    .run();
+}
+
+async function deleteRegistration(env: Env, deviceId: string): Promise<void> {
+  await env.OUTSPIRE_DB.prepare("DELETE FROM registrations WHERE device_id = ?")
+    .bind(deviceId)
+    .run();
+}
+
+async function fetchDispatchJobsForSlot(
+  env: Env,
+  dayKey: string,
+  time: string
+): Promise<PushJob[]> {
+  const result = await env.OUTSPIRE_DB.prepare(`
+    SELECT
+      day_key,
+      time,
+      device_id,
+      kind,
+      token,
+      sandbox,
+      push_type,
+      topic,
+      payload_json
+    FROM dispatch_jobs
+    WHERE day_key = ? AND time = ?
+    ORDER BY device_id, kind
+  `)
+    .bind(dayKey, time)
+    .all<DispatchJobRow>();
+
+  return (result.results ?? []).map(dispatchJobFromRow);
+}
+
+async function writeJobsForToday(
+  env: Env,
+  jobs: Array<{ time: string; job: PushJob }>
+): Promise<void> {
+  if (jobs.length === 0) return;
+
+  const statements = jobs.map(({ time, job }) =>
+    env.OUTSPIRE_DB.prepare(`
+      INSERT INTO dispatch_jobs (
+        day_key,
+        time,
+        device_id,
+        kind,
+        token,
+        sandbox,
+        push_type,
+        topic,
+        payload_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(day_key, time, device_id, kind) DO UPDATE SET
+        token = excluded.token,
+        sandbox = excluded.sandbox,
+        push_type = excluded.push_type,
+        topic = excluded.topic,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `).bind(
+      job.dayKey,
+      time,
+      job.deviceId,
+      job.kind,
+      job.token,
+      encodeBool(job.sandbox),
+      job.pushType,
+      job.topic,
+      JSON.stringify(job.payload),
+      nowUnix()
+    )
+  );
+
+  for (let i = 0; i < statements.length; i += 50) {
+    await env.OUTSPIRE_DB.batch(statements.slice(i, i + 50));
+  }
+}
+
+type RemovalMode = "all" | "startOnly" | "nonStart";
+
+async function removePendingJobsForDevice(
+  env: Env,
+  deviceId: string,
+  dayKey: string = todayCST(),
+  mode: RemovalMode = "all"
+): Promise<void> {
+  const sqlBase = "DELETE FROM dispatch_jobs WHERE day_key = ? AND device_id = ?";
+  switch (mode) {
+    case "startOnly":
+      await env.OUTSPIRE_DB.prepare(`${sqlBase} AND kind = 'start'`)
+        .bind(dayKey, deviceId)
+        .run();
+      return;
+    case "nonStart":
+      await env.OUTSPIRE_DB.prepare(`${sqlBase} AND kind != 'start'`)
+        .bind(dayKey, deviceId)
+        .run();
+      return;
+    default:
+      await env.OUTSPIRE_DB.prepare(sqlBase).bind(dayKey, deviceId).run();
+  }
+}
+
+async function replaceDispatchJobsForSlot(
+  env: Env,
+  dayKey: string,
+  time: string,
+  jobs: PushJob[]
+): Promise<void> {
+  await env.OUTSPIRE_DB.prepare(
+    "DELETE FROM dispatch_jobs WHERE day_key = ? AND time = ?"
+  )
+    .bind(dayKey, time)
+    .run();
+
+  if (jobs.length > 0) {
+    await writeJobsForToday(
+      env,
+      jobs.map((job) => ({ time, job }))
+    );
+  }
+}
+
+async function deleteDispatchJobsForDay(env: Env, dayKey: string): Promise<void> {
+  await env.OUTSPIRE_DB.prepare("DELETE FROM dispatch_jobs WHERE day_key = ?")
+    .bind(dayKey)
+    .run();
+}
+
+async function cleanupStaleData(env: Env): Promise<void> {
+  const today = todayCST();
+  const staleRegistrationThreshold = nowUnix() - REGISTRATION_RETENTION_SECONDS;
+
+  await env.OUTSPIRE_DB.batch([
+    env.OUTSPIRE_DB.prepare("DELETE FROM dispatch_jobs WHERE day_key < ?").bind(today),
+    env.OUTSPIRE_DB.prepare(`
+      DELETE FROM registrations
+      WHERE updated_at < ?
+        AND (
+          current_activity_json IS NULL
+          OR json_extract(current_activity_json, '$.dayKey') IS NULL
+          OR json_extract(current_activity_json, '$.dayKey') < ?
+        )
+    `).bind(staleRegistrationThreshold, today),
+  ]);
 }
 
 async function fetchHolidayCN(
@@ -368,13 +709,27 @@ function buildStateTransitions(
 
     return [
       { time: "07:45", state, kind: "start" },
-      { time: "08:45", state: { ...state, phase: "done", title: "Schedule Complete", subtitle: "", sequence: 2 }, kind: "end" },
+      {
+        time: "08:45",
+        state: {
+          ...state,
+          phase: "done",
+          title: "Schedule Complete",
+          subtitle: "",
+          sequence: 2,
+        },
+        kind: "end",
+      },
     ];
   }
 
   if (periods.length === 0) return [];
 
-  const transitions: Array<{ time: string; state: SnapshotState; kind: JobKind }> = [];
+  const transitions: Array<{
+    time: string;
+    state: SnapshotState;
+    kind: JobKind;
+  }> = [];
   const first = periods[0];
   const upcomingStart = subtractMinutes(first.start, 30);
 
@@ -578,106 +933,9 @@ function stampTimestamp(payload: Record<string, unknown>): Record<string, unknow
     ...payload,
     aps: {
       ...aps,
-      timestamp: Math.floor(Date.now() / 1000),
+      timestamp: nowUnix(),
     },
   };
-}
-
-async function writeJobsForToday(
-  env: Env,
-  jobs: Array<{ time: string; job: PushJob }>
-): Promise<void> {
-  const grouped = new Map<string, PushJob[]>();
-  for (const { time, job } of jobs) {
-    const existing = grouped.get(time) ?? [];
-    existing.push(job);
-    grouped.set(time, existing);
-  }
-
-  const slotKeysByDevice = new Map<string, Set<string>>();
-
-  for (const [time, slotJobs] of grouped) {
-    const dayKey = slotJobs[0]?.dayKey ?? todayCST();
-    const key = dispatchSlotKey(dayKey, time);
-    const existing =
-      ((await env.OUTSPIRE_KV.get(key, "json")) as DispatchSlot) ?? [];
-    const merged = existing.filter(
-      (job) =>
-        !slotJobs.some(
-          (candidate) =>
-            candidate.deviceId === job.deviceId && candidate.kind === job.kind
-        )
-    );
-    merged.push(...slotJobs);
-    await env.OUTSPIRE_KV.put(key, JSON.stringify(merged), {
-      expirationTtl: SLOT_TTL,
-    });
-
-    for (const job of slotJobs) {
-      const keys = slotKeysByDevice.get(job.deviceId) ?? new Set<string>();
-      keys.add(key);
-      slotKeysByDevice.set(job.deviceId, keys);
-    }
-  }
-
-  for (const [deviceId, keys] of slotKeysByDevice) {
-    const dayKey = jobs.find((entry) => entry.job.deviceId === deviceId)?.job.dayKey ?? todayCST();
-    const indexKey = dispatchIndexKey(dayKey, deviceId);
-    const existing =
-      ((await env.OUTSPIRE_KV.get(indexKey, "json")) as DispatchIndex | null) ?? [];
-    const merged = Array.from(new Set([...existing, ...keys]));
-    await env.OUTSPIRE_KV.put(indexKey, JSON.stringify(merged), {
-      expirationTtl: SLOT_TTL,
-    });
-  }
-}
-
-async function removePendingJobsForDevice(
-  env: Env,
-  deviceId: string,
-  predicate?: (job: PushJob) => boolean
-): Promise<void> {
-  const dayKey = todayCST();
-  const indexKey = dispatchIndexKey(dayKey, deviceId);
-  const indexedKeys =
-    ((await env.OUTSPIRE_KV.get(indexKey, "json")) as DispatchIndex | null) ?? [];
-  const keys =
-    indexedKeys.length > 0
-      ? indexedKeys.map((name) => ({ name } as KVNamespaceListKey<unknown>))
-      : await kvListAll(env.OUTSPIRE_KV, {
-          prefix: `dispatch:${dayKey}:`,
-        });
-  const remainingKeys = new Set<string>();
-
-  for (const key of keys) {
-    const slot =
-      ((await env.OUTSPIRE_KV.get(key.name, "json")) as DispatchSlot) ?? [];
-    const filtered = slot.filter((job) => {
-      if (job.deviceId !== deviceId) return true;
-      return predicate ? !predicate(job) : false;
-    });
-
-    if (filtered.length === 0) {
-      await env.OUTSPIRE_KV.delete(key.name);
-    } else if (filtered.length !== slot.length) {
-      await env.OUTSPIRE_KV.put(key.name, JSON.stringify(filtered), {
-        expirationTtl: SLOT_TTL,
-      });
-      if (filtered.some((job) => job.deviceId === deviceId)) {
-        remainingKeys.add(key.name);
-      }
-    } else if (slot.some((job) => job.deviceId === deviceId)) {
-      remainingKeys.add(key.name);
-    }
-  }
-
-  if (remainingKeys.size === 0) {
-    await env.OUTSPIRE_KV.delete(indexKey);
-  } else {
-    await env.OUTSPIRE_KV.put(indexKey, JSON.stringify(Array.from(remainingKeys)), {
-      expirationTtl: SLOT_TTL,
-    });
-  }
 }
 
 async function scheduleStartJobsForRegistration(
@@ -729,7 +987,10 @@ async function scheduleStartJobsForRegistration(
     }
   );
 
-  return { pushed: pushResult.ok, reason: pushResult.ok ? undefined : "start_push_failed" };
+  return {
+    pushed: pushResult.ok,
+    reason: pushResult.ok ? undefined : "start_push_failed",
+  };
 }
 
 async function scheduleUpdateJobsForActivity(
@@ -775,47 +1036,32 @@ async function scheduleUpdateJobsForActivity(
     jobs.push({ time: transition.time, job });
   }
 
-  await removePendingJobsForDevice(env, deviceId, (job) => job.kind !== "start");
+  await removePendingJobsForDevice(env, deviceId, todayCST(), "nonStart");
   if (jobs.length > 0) {
     await writeJobsForToday(env, jobs);
   }
 }
 
 async function handleDailyPlan(env: Env): Promise<void> {
+  await ensureStorageReady(env);
+  await cleanupStaleData(env);
+
   const today = todayCST();
   const yesterday = nowCSTDate();
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   const yKey = yesterday.toISOString().slice(0, 10);
 
-  const oldSlots = await kvListAll(env.OUTSPIRE_KV, {
-    prefix: `dispatch:${yKey}:`,
-  });
-  for (const key of oldSlots) {
-    await env.OUTSPIRE_KV.delete(key.name);
-  }
+  await deleteDispatchJobsForDay(env, yKey);
 
-  const oldIndexes = await kvListAll(env.OUTSPIRE_KV, {
-    prefix: `dispatch-index:${yKey}:`,
-  });
-  for (const key of oldIndexes) {
-    await env.OUTSPIRE_KV.delete(key.name);
-  }
-
-  const regKeys = await kvListAll(env.OUTSPIRE_KV, { prefix: "reg:" });
+  const registrations = await listRegistrations(env);
   const jobs: Array<{ time: string; job: PushJob }> = [];
 
-  for (const key of regKeys) {
-    const reg = (await env.OUTSPIRE_KV.get(key.name, "json")) as StoredRegistration | null;
-    if (!reg) continue;
-
+  for (const { deviceId, reg } of registrations) {
     if (reg.currentActivity && reg.currentActivity.dayKey !== today) {
       reg.currentActivity = undefined;
-      await env.OUTSPIRE_KV.put(key.name, JSON.stringify(reg), {
-        expirationTtl: REG_TTL,
-      });
+      await putRegistration(env, deviceId, reg);
     }
 
-    const deviceId = key.name.replace("reg:", "");
     const decision = await decideTodayForUser(env, reg);
     if (!decision.shouldSendPushes) continue;
     if (reg.currentActivity?.dayKey === today) continue;
@@ -842,23 +1088,19 @@ async function handleDailyPlan(env: Env): Promise<void> {
 }
 
 async function handleMinuteDispatch(env: Env): Promise<void> {
+  await ensureStorageReady(env);
+
   const now = currentTimeCST();
   const dayKey = todayCST();
-  const slotKey = dispatchSlotKey(dayKey, formatTime(now.hours, now.minutes));
-  const jobs =
-    ((await env.OUTSPIRE_KV.get(slotKey, "json")) as DispatchSlot) ?? [];
+  const slotTime = formatTime(now.hours, now.minutes);
+  const jobs = await fetchDispatchJobsForSlot(env, dayKey, slotTime);
   if (jobs.length === 0) return;
 
   const config = apnsConfig(env);
   const remaining: PushJob[] = [];
-  const dispatchedDevices = new Set<string>();
 
   for (const job of jobs) {
-    dispatchedDevices.add(job.deviceId);
-    const reg = (await env.OUTSPIRE_KV.get(
-      `reg:${job.deviceId}`,
-      "json"
-    )) as StoredRegistration | null;
+    const reg = await getRegistration(env, job.deviceId);
     if (!reg) continue;
 
     if (job.kind === "start" && reg.currentActivity?.dayKey === todayCST()) {
@@ -891,7 +1133,8 @@ async function handleMinuteDispatch(env: Env): Promise<void> {
       if (result.status !== 410) {
         remaining.push(job);
       } else {
-        await env.OUTSPIRE_KV.delete(`reg:${job.deviceId}`);
+        await deleteRegistration(env, job.deviceId);
+        await removePendingJobsForDevice(env, job.deviceId, dayKey);
       }
       continue;
     }
@@ -901,57 +1144,34 @@ async function handleMinuteDispatch(env: Env): Promise<void> {
       | { sequence?: number }
       | undefined;
 
-    if (reg.currentActivity && job.kind !== "start" && typeof contentState?.sequence === "number") {
+    if (
+      reg.currentActivity &&
+      job.kind !== "start" &&
+      typeof contentState?.sequence === "number"
+    ) {
       reg.currentActivity.lastSequence = contentState.sequence;
-      reg.currentActivity.updatedAt = Math.floor(Date.now() / 1000);
-      await env.OUTSPIRE_KV.put(`reg:${job.deviceId}`, JSON.stringify(reg), {
-        expirationTtl: REG_TTL,
-      });
+      reg.currentActivity.updatedAt = nowUnix();
+      await putRegistration(env, job.deviceId, reg);
     }
 
     if (job.kind === "end" && reg.currentActivity?.dayKey === todayCST()) {
       reg.currentActivity = undefined;
-      await env.OUTSPIRE_KV.put(`reg:${job.deviceId}`, JSON.stringify(reg), {
-        expirationTtl: REG_TTL,
-      });
+      await putRegistration(env, job.deviceId, reg);
     }
   }
 
-  if (remaining.length === 0) {
-    await env.OUTSPIRE_KV.delete(slotKey);
-  } else {
-    await env.OUTSPIRE_KV.put(slotKey, JSON.stringify(remaining), {
-      expirationTtl: SLOT_TTL,
-    });
-  }
-
-  for (const deviceId of dispatchedDevices) {
-    const indexKey = dispatchIndexKey(dayKey, deviceId);
-    const existing =
-      ((await env.OUTSPIRE_KV.get(indexKey, "json")) as DispatchIndex | null) ?? [];
-    if (existing.length === 0) continue;
-
-    const updated = existing.filter((key) => key !== slotKey);
-    if (updated.length === 0) {
-      await env.OUTSPIRE_KV.delete(indexKey);
-    } else {
-      await env.OUTSPIRE_KV.put(indexKey, JSON.stringify(updated), {
-        expirationTtl: SLOT_TTL,
-      });
-    }
-  }
+  await replaceDispatchJobsForSlot(env, dayKey, slotTime, remaining);
 }
 
 async function handleRegister(request: Request, env: Env): Promise<Response> {
+  await ensureStorageReady(env);
+
   const body: RegisterBody = await request.json();
   if (!body.deviceId || !body.pushStartToken || !body.schedule) {
     return new Response("Missing required fields", { status: 400 });
   }
 
-  const existing = (await env.OUTSPIRE_KV.get(
-    `reg:${body.deviceId}`,
-    "json"
-  )) as StoredRegistration | null;
+  const existing = await getRegistration(env, body.deviceId);
 
   const registration: StoredRegistration = {
     pushStartToken: body.pushStartToken,
@@ -964,9 +1184,7 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
     currentActivity: existing?.currentActivity,
   };
 
-  await env.OUTSPIRE_KV.put(`reg:${body.deviceId}`, JSON.stringify(registration), {
-    expirationTtl: REG_TTL,
-  });
+  await putRegistration(env, body.deviceId, registration);
 
   const result = await scheduleStartJobsForRegistration(
     env,
@@ -983,13 +1201,14 @@ async function handleActivityToken(
   request: Request,
   env: Env
 ): Promise<Response> {
+  await ensureStorageReady(env);
+
   const body: ActivityTokenBody = await request.json();
   if (!body.deviceId || !body.activityId || !body.dayKey || !body.pushUpdateToken) {
     return new Response("Missing required fields", { status: 400 });
   }
 
-  const key = `reg:${body.deviceId}`;
-  const reg = (await env.OUTSPIRE_KV.get(key, "json")) as StoredRegistration | null;
+  const reg = await getRegistration(env, body.deviceId);
   if (!reg) return new Response("Not found", { status: 404 });
 
   reg.currentActivity = {
@@ -997,17 +1216,16 @@ async function handleActivityToken(
     dayKey: body.dayKey,
     pushUpdateToken: body.pushUpdateToken,
     owner: body.owner,
-    lastSequence: reg.currentActivity?.activityId === body.activityId
-      ? reg.currentActivity.lastSequence
-      : -1,
-    updatedAt: Math.floor(Date.now() / 1000),
+    lastSequence:
+      reg.currentActivity?.activityId === body.activityId
+        ? reg.currentActivity.lastSequence
+        : -1,
+    updatedAt: nowUnix(),
   };
 
-  await env.OUTSPIRE_KV.put(key, JSON.stringify(reg), {
-    expirationTtl: REG_TTL,
-  });
+  await putRegistration(env, body.deviceId, reg);
 
-  await removePendingJobsForDevice(env, body.deviceId, (job) => job.kind === "start");
+  await removePendingJobsForDevice(env, body.deviceId, body.dayKey, "startOnly");
   await scheduleUpdateJobsForActivity(env, body.deviceId, reg);
 
   return new Response(JSON.stringify({ ok: true }), {
@@ -1019,23 +1237,22 @@ async function handleActivityEnded(
   request: Request,
   env: Env
 ): Promise<Response> {
+  await ensureStorageReady(env);
+
   const body: ActivityEndedBody = await request.json();
   if (!body.deviceId || !body.activityId || !body.dayKey) {
     return new Response("Missing required fields", { status: 400 });
   }
 
-  const key = `reg:${body.deviceId}`;
-  const reg = (await env.OUTSPIRE_KV.get(key, "json")) as StoredRegistration | null;
+  const reg = await getRegistration(env, body.deviceId);
   if (!reg) return new Response("Not found", { status: 404 });
 
   if (reg.currentActivity?.activityId === body.activityId) {
     reg.currentActivity = undefined;
-    await env.OUTSPIRE_KV.put(key, JSON.stringify(reg), {
-      expirationTtl: REG_TTL,
-    });
+    await putRegistration(env, body.deviceId, reg);
   }
 
-  await removePendingJobsForDevice(env, body.deviceId);
+  await removePendingJobsForDevice(env, body.deviceId, body.dayKey);
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: { "content-type": "application/json" },
@@ -1043,10 +1260,12 @@ async function handleActivityEnded(
 }
 
 async function handleUnregister(request: Request, env: Env): Promise<Response> {
+  await ensureStorageReady(env);
+
   const body: { deviceId: string } = await request.json();
   if (!body.deviceId) return new Response("Missing deviceId", { status: 400 });
 
-  await env.OUTSPIRE_KV.delete(`reg:${body.deviceId}`);
+  await deleteRegistration(env, body.deviceId);
   await removePendingJobsForDevice(env, body.deviceId);
 
   return new Response(JSON.stringify({ ok: true }), {
@@ -1055,16 +1274,15 @@ async function handleUnregister(request: Request, env: Env): Promise<Response> {
 }
 
 async function handlePause(request: Request, env: Env): Promise<Response> {
+  await ensureStorageReady(env);
+
   const body: { deviceId: string; resumeDate?: string } = await request.json();
-  const key = `reg:${body.deviceId}`;
-  const reg = (await env.OUTSPIRE_KV.get(key, "json")) as StoredRegistration | null;
+  const reg = await getRegistration(env, body.deviceId);
   if (!reg) return new Response("Not found", { status: 404 });
 
   reg.paused = true;
   reg.resumeDate = body.resumeDate;
-  await env.OUTSPIRE_KV.put(key, JSON.stringify(reg), {
-    expirationTtl: REG_TTL,
-  });
+  await putRegistration(env, body.deviceId, reg);
 
   await removePendingJobsForDevice(env, body.deviceId);
 
@@ -1074,16 +1292,15 @@ async function handlePause(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleResume(request: Request, env: Env): Promise<Response> {
+  await ensureStorageReady(env);
+
   const body: { deviceId: string } = await request.json();
-  const key = `reg:${body.deviceId}`;
-  const reg = (await env.OUTSPIRE_KV.get(key, "json")) as StoredRegistration | null;
+  const reg = await getRegistration(env, body.deviceId);
   if (!reg) return new Response("Not found", { status: 404 });
 
   reg.paused = false;
   reg.resumeDate = undefined;
-  await env.OUTSPIRE_KV.put(key, JSON.stringify(reg), {
-    expirationTtl: REG_TTL,
-  });
+  await putRegistration(env, body.deviceId, reg);
 
   const result = await scheduleStartJobsForRegistration(env, body.deviceId, reg);
   return new Response(JSON.stringify({ ok: true, ...result }), {
@@ -1093,6 +1310,8 @@ async function handleResume(request: Request, env: Env): Promise<Response> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    await ensureStorageReady(env);
+
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
