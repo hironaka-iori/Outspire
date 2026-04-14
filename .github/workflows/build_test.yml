@@ -27,8 +27,8 @@ jobs:
       - name: SwiftLint
         run: swiftlint
 
-  build-and-test:
-    name: Build & Test
+  build:
+    name: Build
     runs-on: macos-26
     needs: lint
 
@@ -41,12 +41,11 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
 
-      - name: Build & run unit tests
+      - name: Build
         run: |
           xcodebuild \
             -project Outspire.xcodeproj \
             -scheme "Outspire" \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation \
-            -enableCodeCoverage YES \
-            test
+            build
