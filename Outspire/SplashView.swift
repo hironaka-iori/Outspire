@@ -2,44 +2,43 @@ import SwiftUI
 
 struct SplashView: View {
     @State private var isActive = false
-    @State private var size = 0.8
-    @State private var opacity = 0.5
+    @State private var opacity = 0.0
 
     var body: some View {
         if isActive {
-            // Replace with your actual Main ContentView
-            ContentView() 
+            RootTabView()
         } else {
-            VStack {
-                VStack(spacing: 20) {
-                    // Replace "sparkles" with your Outspire logo asset
-                    Image(systemName: "sparkles") 
-                        .font(.system(size: 80))
-                        .foregroundColor(.blue) // Use your primary brand color
-                    
-                    Text("Outspire")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                }
-                .scaleEffect(size)
-                .opacity(opacity)
-                .onAppear {
-                    withAnimation(.easeIn(duration: 1.0)) {
-                        self.size = 1.0
-                        self.opacity = 1.0
-                    }
-                }
+            VStack(spacing: 16) {
+                Text("Outspire")
+                    .font(.system(size: 52, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+
+                Text("All-in-one Campus App for WFLA")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
             }
+            .opacity(opacity)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(UIColor.systemBackground))
             .onAppear {
-                // Simulates loading time before transitioning to the main app
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                withAnimation(.easeIn(duration: 1.0)) {
+                    opacity = 1.0
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                     withAnimation {
-                        self.isActive = true
+                        isActive = true
                     }
                 }
             }
         }
+    }
+}
+
+struct SplashView_Previews: PreviewProvider {
+    static var previews: some View {
+        SplashView()
     }
 }
